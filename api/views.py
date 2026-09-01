@@ -153,15 +153,15 @@ class ItemListView(generics.ListCreateAPIView):
         search = self.request.query_params.get('search')
         status_param = self.request.query_params.get('status')
 
+        # Regular users see all catalog items except explicitly disabled ones
         if not self.request.user.is_authenticated or not self.request.user.is_staff:
-            # Regular users see active items only
-            queryset = queryset.filter(status='active')
-        elif status_param and status_param != 'all':
-            queryset = queryset.filter(status=status_param)
+            queryset = queryset.exclude(status__iexact='disabled')
+        elif status_param and status_param.lower() != 'all':
+            queryset = queryset.filter(status__iexact=status_param)
 
-        if item_type:
-            queryset = queryset.filter(item_type=item_type)
-        if category:
+        if item_type and item_type.lower() != 'all':
+            queryset = queryset.filter(item_type__iexact=item_type)
+        if category and category.upper() != 'ALL':
             queryset = queryset.filter(category__iexact=category)
         if search:
             queryset = queryset.filter(
@@ -398,24 +398,48 @@ class ItemImportView(APIView):
             return Response({"error": "Provide a CSV file or JSON array of items."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Process each item
-        for idx, row in enumerate(items_to_process, start=1):
-            name = row.get('name', '').strip()
-            item_code = row.get('item_code', '').strip()
-            item_type = row.get('item_type', 'electrical').strip().lower()
-            category = row.get('category', 'General').strip()
-            unit = row.get('unit', 'Piece').strip()
-            description = row.get('description', '').strip()
-            status_val = row.get('status', 'active').strip().lower()
+        for idx, raw_row in enumerate(items_to_process, start=1):
+            row = {k.strip().lower(): v.strip() if isinstance(v, str) else '' for k, v in raw_row.items() if k}
 
-            if not name or not item_code:
-                errors.append(f"Row {idx}: Missing name or item_code.")
+            name = (
+                row.get('name') or 
+                row.get('item_name') or 
+                row.get('item name') or 
+                row.get('material') or 
+                row.get('material name') or
+                row.get('item') or ''
+            ).strip()
+
+            if not name:
+                if not any(row.values()):
+                    continue
+                errors.append(f"Row {idx}: Missing item name.")
                 continue
 
-            if item_type not in ['electrical', 'plumbing']:
-                item_type = 'electrical'
+            raw_item_type = (row.get('item_type') or row.get('type') or row.get('trade') or 'electrical').lower()
+            item_type = 'plumbing' if 'plumb' in raw_item_type else 'electrical'
 
-            if status_val not in ['active', 'disabled']:
-                status_val = 'active'
+            item_code = (
+                row.get('item_code') or 
+                row.get('code') or 
+                row.get('item code') or 
+                row.get('itemcode') or ''
+            ).strip()
+
+            if not item_code:
+                prefix = 'PLM' if item_type == 'plumbing' else 'ELE'
+                name_slug = re.sub(r'[^A-Z0-9]', '', name.upper())[:6] or 'ITEM'
+                existing_item = Item.objects.filter(name__iexact=name, item_type=item_type).first()
+                if existing_item:
+                    item_code = existing_item.item_code
+                else:
+                    item_code = f"{prefix}-{name_slug}-{idx:04d}"
+
+            category = (row.get('category') or row.get('cat') or 'General').strip()
+            unit = (row.get('unit') or row.get('unit metric') or 'Piece').strip()
+            description = (row.get('description') or row.get('desc') or '').strip()
+            status_val = (row.get('status') or 'active').strip().lower()
+            status_final = 'disabled' if status_val in ['disabled', 'inactive', 'false', '0'] else 'active'
 
             item, created = Item.objects.update_or_create(
                 item_code=item_code,
@@ -425,7 +449,7 @@ class ItemImportView(APIView):
                     'category': category,
                     'unit': unit,
                     'description': description,
-                    'status': status_val,
+                    'status': status_final,
                 }
             )
 
@@ -552,27 +576,48 @@ class GoogleSheetCatalogSyncView(APIView):
             # Normalize keys to lowercase
             row = {k.strip().lower(): v.strip() if isinstance(v, str) else '' for k, v in raw_row.items() if k}
             
-            # Match fields flexibly
-            item_code = row.get('item_code') or row.get('code') or row.get('item code') or row.get('itemcode')
-            name = row.get('name') or row.get('item_name') or row.get('item name') or row.get('material') or row.get('material name')
-            item_type = (row.get('item_type') or row.get('type') or row.get('trade') or 'electrical').lower()
-            category = row.get('category') or row.get('cat') or 'General'
-            unit = row.get('unit') or row.get('unit metric') or 'Piece'
-            description = row.get('description') or row.get('desc') or ''
-            status_val = (row.get('status') or 'active').lower()
+            # Match fields flexibly across common column names
+            name = (
+                row.get('name') or 
+                row.get('item_name') or 
+                row.get('item name') or 
+                row.get('material') or 
+                row.get('material name') or
+                row.get('item') or ''
+            ).strip()
 
-            if not name or not item_code:
+            if not name:
                 # If completely empty row, skip without logging error
                 if not any(row.values()):
                     continue
-                errors.append(f"Row {idx}: Missing item_code or name.")
+                errors.append(f"Row {idx}: Missing item name.")
                 continue
 
-            if item_type not in ['electrical', 'plumbing']:
-                item_type = 'electrical'
+            raw_item_type = (row.get('item_type') or row.get('type') or row.get('trade') or row.get('category_type') or '').lower()
+            item_type = 'plumbing' if 'plumb' in raw_item_type else 'electrical'
 
-            if status_val not in ['active', 'disabled']:
-                status_val = 'active'
+            item_code = (
+                row.get('item_code') or 
+                row.get('code') or 
+                row.get('item code') or 
+                row.get('itemcode') or ''
+            ).strip()
+
+            if not item_code:
+                # Auto-generate unique item code so row is never skipped
+                prefix = 'PLM' if item_type == 'plumbing' else 'ELE'
+                name_slug = re.sub(r'[^A-Z0-9]', '', name.upper())[:6] or 'ITEM'
+                existing_item = Item.objects.filter(name__iexact=name, item_type=item_type).first()
+                if existing_item:
+                    item_code = existing_item.item_code
+                else:
+                    item_code = f"{prefix}-{name_slug}-{idx:04d}"
+
+            category = (row.get('category') or row.get('cat') or row.get('group') or 'General').strip()
+            unit = (row.get('unit') or row.get('unit metric') or row.get('uom') or 'Piece').strip()
+            description = (row.get('description') or row.get('desc') or row.get('specs') or row.get('notes') or '').strip()
+            status_val = (row.get('status') or 'active').strip().lower()
+            status_final = 'disabled' if status_val in ['disabled', 'inactive', 'false', '0'] else 'active'
 
             item, created = Item.objects.update_or_create(
                 item_code=item_code,
@@ -582,7 +627,7 @@ class GoogleSheetCatalogSyncView(APIView):
                     'category': category,
                     'unit': unit,
                     'description': description,
-                    'status': status_val,
+                    'status': status_final,
                 }
             )
 
