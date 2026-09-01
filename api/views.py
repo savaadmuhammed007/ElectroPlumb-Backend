@@ -173,8 +173,8 @@ class ItemListView(generics.ListCreateAPIView):
         return queryset
 
     def perform_create(self, serializer):
-        if not self.request.user.is_staff:
-            raise permissions.PermissionDenied("Only admins can add items.")
+        if not self.request.user.is_authenticated:
+            raise permissions.PermissionDenied("Authentication required to add items.")
         serializer.save()
 
 
