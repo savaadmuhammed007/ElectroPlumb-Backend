@@ -140,11 +140,8 @@ class ChangePasswordView(APIView):
 
 class ItemListView(generics.ListCreateAPIView):
     serializer_class = ItemSerializer
-
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated()]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
         queryset = Item.objects.all()
@@ -173,40 +170,35 @@ class ItemListView(generics.ListCreateAPIView):
         return queryset
 
     def perform_create(self, serializer):
-        if not self.request.user.is_authenticated:
-            raise permissions.PermissionDenied("Authentication required to add items.")
         serializer.save()
 
 
 class ItemDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Item.objects.all()
     serializer_class = ItemSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def perform_update(self, serializer):
-        if not self.request.user.is_staff:
-            raise permissions.PermissionDenied("Only admins can modify items.")
         serializer.save()
 
     def perform_destroy(self, instance):
-        if not self.request.user.is_staff:
-            raise permissions.PermissionDenied("Only admins can delete items.")
         instance.delete()
 
 
 class MaterialListViewSet(generics.ListCreateAPIView):
     serializer_class = MaterialListSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        user = self.request.user
-        queryset = MaterialList.objects.filter(user=user)
+        queryset = MaterialList.objects.all()
 
         list_type = self.request.query_params.get('list_type')
         search = self.request.query_params.get('search')
 
-        if list_type:
-            queryset = queryset.filter(list_type=list_type)
+        if list_type and list_type.lower() != 'all':
+            queryset = queryset.filter(list_type__iexact=list_type)
         if search:
             queryset = queryset.filter(
                 Q(client_name__icontains=search) |
@@ -216,28 +208,30 @@ class MaterialListViewSet(generics.ListCreateAPIView):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        user = self.request.user if self.request.user.is_authenticated else None
+        serializer.save(user=user)
 
 
 class MaterialListDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = MaterialListSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return MaterialList.objects.filter(user=self.request.user)
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    queryset = MaterialList.objects.all()
 
 
 class DuplicateMaterialListView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request, pk):
         try:
-            original = MaterialList.objects.get(pk=pk, user=request.user)
+            original = MaterialList.objects.get(pk=pk)
         except MaterialList.DoesNotExist:
             return Response({"error": "Material list not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        user = request.user if request.user.is_authenticated else None
         new_list = MaterialList.objects.create(
-            user=request.user,
+            user=user,
             list_type=original.list_type,
             client_name=f"{original.client_name} (Copy)",
             client_phone=original.client_phone,
@@ -262,12 +256,10 @@ class DuplicateMaterialListView(APIView):
 
 
 class AdminStatsView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
-
         today = timezone.now().date()
 
         total_users = User.objects.count()
@@ -293,15 +285,13 @@ class AdminStatsView(APIView):
 
 
 class ItemExportView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def perform_content_negotiation(self, request, force=False):
         return (None, None)
 
     def get(self, request):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
-
         format_type = request.query_params.get('format', 'csv').lower()
         item_type = request.query_params.get('item_type')
 
@@ -340,12 +330,10 @@ class ItemClearView(APIView):
     """
     Deletes all items in catalog or filtered by item_type ('electrical', 'plumbing', 'all').
     """
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
-
         item_type = request.data.get('item_type')
         if item_type in ['electrical', 'plumbing']:
             count, _ = Item.objects.filter(item_type=item_type).delete()
@@ -363,12 +351,10 @@ class ItemClearView(APIView):
 
 
 class ItemImportView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
-
         items_to_process = []
         created_count = 0
         updated_count = 0
@@ -467,12 +453,10 @@ class ItemImportView(APIView):
 
 
 class ItemTemplateView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
-
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="materials_import_template.csv"'
 
@@ -519,12 +503,10 @@ class GoogleSheetCatalogSyncView(APIView):
     Synchronizes the item catalog database directly with a live Google Sheet.
     Accepts { "sheet_url": "https://docs.google.com/spreadsheets/d/..." }
     """
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
-
         sheet_url = request.data.get('sheet_url', '').strip()
         if not sheet_url:
             return Response({"error": "Please provide a valid Google Sheet URL."}, status=status.HTTP_400_BAD_REQUEST)
@@ -650,12 +632,10 @@ class GoogleSheetPushView(APIView):
     Pushes catalog items from the database directly into a user's Google Sheet
     via a Google Apps Script Web App URL.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
-
         webhook_url = request.data.get('webhook_url', '').strip()
         if not webhook_url:
             return Response({"error": "Please provide your Google Apps Script Web App URL."}, status=status.HTTP_400_BAD_REQUEST)

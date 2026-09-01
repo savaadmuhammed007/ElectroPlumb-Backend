@@ -59,7 +59,7 @@ class MaterialList(models.Model):
         ('plumbing', 'Plumbing'),
     )
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='material_lists')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='material_lists')
     list_type = models.CharField(max_length=20, choices=LIST_TYPE_CHOICES)
     client_name = models.CharField(max_length=150)
     client_phone = models.CharField(max_length=30, blank=True, null=True)
