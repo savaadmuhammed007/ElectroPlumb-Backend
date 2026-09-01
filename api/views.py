@@ -1,12 +1,20 @@
+import csv
+import io
+import json
+import re
+import urllib.request
+import urllib.error
+from datetime import datetime
+
+from django.contrib.auth.models import User
+from django.db.models import Count, Q
+from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import status, generics, permissions, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth.models import User
-from django.db.models import Count, Q
-from django.utils import timezone
-from datetime import datetime
 
 from .models import UserProfile, Item, MaterialList, ListItem
 from .serializers import (
@@ -284,11 +292,6 @@ class AdminStatsView(APIView):
         })
 
 
-import csv
-import json
-import io
-from django.http import HttpResponse
-
 class ItemExportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -455,11 +458,6 @@ class ItemTemplateView(APIView):
         writer.writerow(['PLM-SAMPLE-01', 'Sample CPVC Pipe 1 inch', 'plumbing', 'Pipes', 'Length', 'Sample CPVC pipe description', 'active'])
 
         return response
-
-
-import re
-import urllib.request
-import urllib.error
 
 def normalize_google_sheet_url(url):
     """
